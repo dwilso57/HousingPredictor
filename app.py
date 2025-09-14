@@ -12,6 +12,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 from sklearn.model_selection import cross_val_score
+from scipy import stats
+from scipy.stats import chi2_contingency, f_oneway
 import numpy as np
 import io
 import base64
@@ -37,7 +39,7 @@ Upload your CSV data to explore patterns, perform clustering analysis, and build
 st.sidebar.title("Navigation")
 analysis_option = st.sidebar.selectbox(
     "Choose Analysis Type:",
-    ["Data Upload & Overview", "Exploratory Analysis", "Clustering Analysis", "Classification Model", "Insights & Summary"]
+    ["Data Upload & Overview", "Exploratory Analysis", "Clustering Analysis", "Classification Model", "Statistical Tests", "Insights & Summary"]
 )
 
 # Initialize session state
@@ -604,6 +606,147 @@ elif analysis_option == "Classification Model":
                         st.markdown(create_download_link(importance_df, "feature_importance_comparison", "csv"), unsafe_allow_html=True)
                     else:
                         st.write("No tree-based models selected")
+
+# Statistical Tests Section
+elif analysis_option == "Statistical Tests":
+    st.header("📊 Advanced Statistical Analysis")
+    
+    if not st.session_state.data_loaded:
+        st.warning("Please upload data first in the 'Data Upload & Overview' section.")
+    else:
+        df = st.session_state.df
+        
+        st.subheader("🔗 Correlation Analysis")
+        
+        # Numeric correlation matrix
+        numeric_cols = ['Suicides', 'Population', 'Rate_per_100k']
+        correlation_matrix = df[numeric_cols].corr()
+        
+        # Create heatmap
+        fig_corr = px.imshow(
+            correlation_matrix,
+            title="Correlation Matrix of Numeric Variables",
+            color_continuous_scale="RdBu_r",
+            aspect="auto"
+        )
+        fig_corr.update_layout(
+            xaxis_title="Variables",
+            yaxis_title="Variables"
+        )
+        st.plotly_chart(fig_corr, use_container_width=True)
+        
+        # Display correlation values
+        st.write("**Correlation Coefficients:**")
+        st.dataframe(correlation_matrix, use_container_width=True)
+        
+        st.subheader("🧪 Chi-Square Tests of Independence")
+        
+        # Chi-square test for categorical variables
+        categorical_pairs = [
+            ("AgeGroup", "Sex"),
+            ("AgeGroup", "Race"), 
+            ("Sex", "Race")
+        ]
+        
+        chi_square_results = []
+        for var1, var2 in categorical_pairs:
+            contingency_table = pd.crosstab(df[var1], df[var2])
+            chi2, p_value, dof, expected = chi2_contingency(contingency_table)
+            
+            chi_square_results.append({
+                "Variable Pair": f"{var1} vs {var2}",
+                "Chi-Square Statistic": f"{chi2:.4f}",
+                "P-value": f"{p_value:.4f}",
+                "Degrees of Freedom": dof,
+                "Significant": "Yes" if p_value < 0.05 else "No"
+            })
+            
+            # Display contingency table
+            with st.expander(f"Contingency Table: {var1} vs {var2}"):
+                st.dataframe(contingency_table, use_container_width=True)
+        
+        chi_df = pd.DataFrame(chi_square_results)
+        st.dataframe(chi_df, use_container_width=True)
+        
+        st.subheader("📈 ANOVA (Analysis of Variance)")
+        
+        # ANOVA tests for rate differences across categorical groups
+        anova_results = []
+        
+        for category in ["AgeGroup", "Sex", "Race"]:
+            groups = []
+            group_names = []
+            for group_value in df[category].unique():
+                group_data = df[df[category] == group_value]["Rate_per_100k"]
+                groups.append(group_data)
+                group_names.append(group_value)
+            
+            # Perform ANOVA
+            f_stat, p_value = f_oneway(*groups)
+            
+            anova_results.append({
+                "Category": category,
+                "F-Statistic": f"{f_stat:.4f}",
+                "P-value": f"{p_value:.4f}",
+                "Significant": "Yes" if p_value < 0.05 else "No",
+                "Groups": len(groups)
+            })
+        
+        anova_df = pd.DataFrame(anova_results)
+        st.dataframe(anova_df, use_container_width=True)
+        
+        st.subheader("📊 Descriptive Statistics by Groups")
+        
+        # Detailed group statistics
+        for category in ["AgeGroup", "Sex", "Race"]:
+            with st.expander(f"Statistics by {category}"):
+                group_stats = df.groupby(category)["Rate_per_100k"].agg([
+                    'count', 'mean', 'std', 'min', 'max', 'median'
+                ]).round(2)
+                group_stats.columns = ['Count', 'Mean', 'Std Dev', 'Min', 'Max', 'Median']
+                st.dataframe(group_stats, use_container_width=True)
+        
+        st.subheader("📋 Statistical Summary")
+        
+        # Create summary of findings
+        significant_chi_square = chi_df[chi_df["Significant"] == "Yes"]["Variable Pair"].tolist()
+        significant_anova = anova_df[anova_df["Significant"] == "Yes"]["Category"].tolist()
+        
+        st.write("**Key Findings:**")
+        
+        if significant_chi_square:
+            st.write(f"• **Significant associations found:** {', '.join(significant_chi_square)}")
+        else:
+            st.write("• No significant associations found between categorical variables")
+        
+        if significant_anova:
+            st.write(f"• **Significant rate differences by:** {', '.join(significant_anova)}")
+        else:
+            st.write("• No significant rate differences found across categorical groups")
+        
+        # Strongest correlations
+        corr_vals = correlation_matrix.abs().unstack().sort_values(ascending=False)
+        corr_vals = corr_vals[corr_vals < 1.0]  # Remove self-correlations
+        if len(corr_vals) > 0:
+            strongest_corr = corr_vals.index[0]
+            strongest_val = corr_vals.iloc[0]
+            st.write(f"• **Strongest correlation:** {strongest_corr[0]} vs {strongest_corr[1]} (r = {strongest_val:.3f})")
+        
+        # Export statistical results
+        st.subheader("📤 Export Statistical Results")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Correlation matrix export
+            st.markdown(create_download_link(correlation_matrix, "correlation_matrix", "csv"), unsafe_allow_html=True)
+        
+        with col2:
+            # Chi-square results export
+            st.markdown(create_download_link(chi_df, "chi_square_tests", "csv"), unsafe_allow_html=True)
+        
+        with col3:
+            # ANOVA results export
+            st.markdown(create_download_link(anova_df, "anova_results", "csv"), unsafe_allow_html=True)
 
 # Insights & Summary Section
 elif analysis_option == "Insights & Summary":
