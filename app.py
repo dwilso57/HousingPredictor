@@ -8,7 +8,10 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.cluster import KMeans
 from sklearn.tree import DecisionTreeClassifier, plot_tree
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.model_selection import cross_val_score
 import numpy as np
 import io
 import base64
@@ -408,7 +411,7 @@ elif analysis_option == "Classification Model":
         df_encoded, le_age, le_sex, le_race = encode_categorical_features(df)
         
         st.subheader("⚙️ Model Configuration")
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             risk_threshold = st.slider(
@@ -421,127 +424,186 @@ elif analysis_option == "Classification Model":
             )
         
         with col2:
+            selected_models = st.multiselect(
+                "Select Models to Compare",
+                ["Decision Tree", "Random Forest", "SVM"],
+                default=["Decision Tree", "Random Forest", "SVM"]
+            )
+        
+        with col3:
             max_depth = st.slider("Maximum Tree Depth", min_value=2, max_value=10, value=3)
         
-        if st.button("Train Classification Model", type="primary"):
-            # Create high/low risk labels
-            threshold_value = df_encoded["Rate_per_100k"].quantile(risk_threshold)
-            df_encoded["HighRisk"] = (df_encoded["Rate_per_100k"] > threshold_value).astype(int)
-            
-            # Prepare features and target
-            features = ["Age_encoded", "Sex_encoded", "Race_encoded"]
-            X_class = df_encoded[features]
-            y_class = df_encoded["HighRisk"]
-            
-            # Train classifier
-            clf = DecisionTreeClassifier(max_depth=max_depth, random_state=42)
-            clf.fit(X_class, y_class)
-            
-            # Display results
-            st.subheader("🎯 Model Results")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.write("**Risk Distribution:**")
-                risk_counts = df_encoded["HighRisk"].value_counts()
-                risk_labels = ["Low Risk", "High Risk"]
+        if st.button("Train Classification Models", type="primary"):
+            if not selected_models:
+                st.error("Please select at least one model to train.")
+            else:
+                # Create high/low risk labels
+                threshold_value = df_encoded["Rate_per_100k"].quantile(risk_threshold)
+                df_encoded["HighRisk"] = (df_encoded["Rate_per_100k"] > threshold_value).astype(int)
                 
-                fig_risk = px.pie(
-                    values=risk_counts.values,
-                    names=risk_labels,
-                    title="Risk Distribution in Dataset"
-                )
-                st.plotly_chart(fig_risk, use_container_width=True)
-            
-            with col2:
-                st.write("**Classification Accuracy:**")
-                predictions = clf.predict(X_class)
-                accuracy = (predictions == y_class).mean()
-                st.metric("Training Accuracy", f"{accuracy:.2%}")
+                # Prepare features and target
+                features = ["Age_encoded", "Sex_encoded", "Race_encoded"]
+                X_class = df_encoded[features]
+                y_class = df_encoded["HighRisk"]
                 
-                st.write(f"**Risk Threshold:** {threshold_value:.2f} per 100k")
-                st.write(f"**High Risk Records:** {risk_counts[1]} ({risk_counts[1]/len(df_encoded):.1%})")
-                st.write(f"**Low Risk Records:** {risk_counts[0]} ({risk_counts[0]/len(df_encoded):.1%})")
+                # Initialize models
+                models = {}
+                if "Decision Tree" in selected_models:
+                    models["Decision Tree"] = DecisionTreeClassifier(max_depth=max_depth, random_state=42)
+                if "Random Forest" in selected_models:
+                    models["Random Forest"] = RandomForestClassifier(n_estimators=100, max_depth=max_depth, random_state=42)
+                if "SVM" in selected_models:
+                    models["SVM"] = SVC(probability=True, random_state=42)
+                
+                # Train all models and store results
+                model_results = {}
+                for name, model in models.items():
+                    model.fit(X_class, y_class)
+                    predictions = model.predict(X_class)
+                    accuracy = accuracy_score(y_class, predictions)
+                    cv_scores = cross_val_score(model, X_class, y_class, cv=3)
+                    
+                    model_results[name] = {
+                        "model": model,
+                        "accuracy": accuracy,
+                        "cv_mean": cv_scores.mean(),
+                        "cv_std": cv_scores.std(),
+                        "predictions": predictions
+                    }
             
-            # Feature importance
-            st.subheader("📊 Feature Importance")
-            feature_importance = pd.DataFrame({
-                'Feature': ['Age', 'Sex', 'Race'],
-                'Importance': clf.feature_importances_
-            }).sort_values('Importance', ascending=True)
+                # Display results
+                st.subheader("🎯 Model Comparison Results")
+                
+                # Model performance comparison
+                st.subheader("📊 Model Performance Comparison")
+                comparison_data = []
+                for name, results in model_results.items():
+                    comparison_data.append({
+                        "Model": name,
+                        "Training Accuracy": f"{results['accuracy']:.2%}",
+                        "CV Mean": f"{results['cv_mean']:.2%}",
+                        "CV Std": f"{results['cv_std']:.3f}"
+                    })
+                
+                comparison_df = pd.DataFrame(comparison_data)
+                st.dataframe(comparison_df, use_container_width=True)
+                
+                # Best model selection
+                best_model_name = max(model_results.keys(), key=lambda x: model_results[x]['cv_mean'])
+                best_model = model_results[best_model_name]['model']
+                st.success(f"🏆 Best performing model: **{best_model_name}** (CV Score: {model_results[best_model_name]['cv_mean']:.2%})")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Risk Distribution:**")
+                    risk_counts = df_encoded["HighRisk"].value_counts()
+                    risk_labels = ["Low Risk", "High Risk"]
+                    
+                    fig_risk = px.pie(
+                        values=risk_counts.values,
+                        names=risk_labels,
+                        title="Risk Distribution in Dataset"
+                    )
+                    st.plotly_chart(fig_risk, use_container_width=True)
+                
+                with col2:
+                    st.write("**Dataset Information:**")
+                    st.write(f"**Risk Threshold:** {threshold_value:.2f} per 100k")
+                    st.write(f"**High Risk Records:** {risk_counts[1]} ({risk_counts[1]/len(df_encoded):.1%})")
+                    st.write(f"**Low Risk Records:** {risk_counts[0]} ({risk_counts[0]/len(df_encoded):.1%})")
+                    st.write(f"**Models Trained:** {len(model_results)}")
             
-            fig_importance = px.bar(
-                feature_importance,
-                x='Importance',
-                y='Feature',
-                orientation='h',
-                title="Feature Importance in Predicting Suicide Risk"
-            )
-            st.plotly_chart(fig_importance, use_container_width=True)
+                # Feature importance comparison (for tree-based models)
+                st.subheader("📊 Feature Importance Comparison")
+                tree_models = {name: results for name, results in model_results.items() 
+                             if hasattr(results['model'], 'feature_importances_')}
+                
+                if tree_models:
+                    importance_data = []
+                    for name, results in tree_models.items():
+                        for i, feature in enumerate(['Age', 'Sex', 'Race']):
+                            importance_data.append({
+                                'Model': name,
+                                'Feature': feature,
+                                'Importance': results['model'].feature_importances_[i]
+                            })
+                    
+                    importance_df = pd.DataFrame(importance_data)
+                    fig_importance = px.bar(
+                        importance_df,
+                        x='Importance',
+                        y='Feature',
+                        color='Model',
+                        orientation='h',
+                        title="Feature Importance Comparison (Tree-based Models)",
+                        barmode='group'
+                    )
+                    st.plotly_chart(fig_importance, use_container_width=True)
+                else:
+                    st.info("Feature importance is only available for tree-based models (Decision Tree, Random Forest).")
             
-            # Decision tree visualization
-            st.subheader("🌳 Decision Tree Visualization")
-            fig, ax = plt.subplots(figsize=(12, 8))
-            plot_tree(
-                clf, 
-                feature_names=['Age', 'Sex', 'Race'],
-                class_names=['Low Risk', 'High Risk'],
-                filled=True,
-                ax=ax
-            )
-            plt.title("Decision Tree for Suicide Risk Prediction")
-            st.pyplot(fig)
+                # Decision tree visualization (if Decision Tree is selected)
+                if "Decision Tree" in model_results:
+                    st.subheader("🌳 Decision Tree Visualization")
+                    fig, ax = plt.subplots(figsize=(12, 8))
+                    plot_tree(
+                        model_results["Decision Tree"]['model'], 
+                        feature_names=['Age', 'Sex', 'Race'],
+                        class_names=['Low Risk', 'High Risk'],
+                        filled=True,
+                        ax=ax
+                    )
+                    plt.title("Decision Tree for Suicide Risk Prediction")
+                    st.pyplot(fig)
             
-            # Prediction examples
-            st.subheader("🔮 Risk Predictions by Demographics")
-            prediction_results = []
+                # Prediction examples using best model
+                st.subheader(f"🔮 Risk Predictions by Demographics (using {best_model_name})")
+                prediction_results = []
+                
+                for age_val in df_encoded["Age_encoded"].unique():
+                    for sex_val in df_encoded["Sex_encoded"].unique():
+                        for race_val in df_encoded["Race_encoded"].unique():
+                            pred = best_model.predict([[age_val, sex_val, race_val]])[0]
+                            if hasattr(best_model, 'predict_proba'):
+                                prob = best_model.predict_proba([[age_val, sex_val, race_val]])[0]
+                                prob_text = f"{prob[1]:.2%}"
+                            else:
+                                prob_text = "N/A"
+                            
+                            age_label = le_age.inverse_transform([age_val])[0]
+                            sex_label = le_sex.inverse_transform([sex_val])[0]
+                            race_label = le_race.inverse_transform([race_val])[0]
+                            
+                            prediction_results.append({
+                                "Age Group": age_label,
+                                "Sex": sex_label,
+                                "Race": race_label,
+                                "Predicted Risk": "High Risk" if pred == 1 else "Low Risk",
+                                "High Risk Probability": prob_text
+                            })
+                
+                pred_df = pd.DataFrame(prediction_results)
+                st.dataframe(pred_df, use_container_width=True)
             
-            for age_val in df_encoded["Age_encoded"].unique():
-                for sex_val in df_encoded["Sex_encoded"].unique():
-                    for race_val in df_encoded["Race_encoded"].unique():
-                        pred = clf.predict([[age_val, sex_val, race_val]])[0]
-                        prob = clf.predict_proba([[age_val, sex_val, race_val]])[0]
-                        
-                        age_label = le_age.inverse_transform([age_val])[0]
-                        sex_label = le_sex.inverse_transform([sex_val])[0]
-                        race_label = le_race.inverse_transform([race_val])[0]
-                        
-                        prediction_results.append({
-                            "Age Group": age_label,
-                            "Sex": sex_label,
-                            "Race": race_label,
-                            "Predicted Risk": "High Risk" if pred == 1 else "Low Risk",
-                            "High Risk Probability": f"{prob[1]:.2%}"
-                        })
-            
-            pred_df = pd.DataFrame(prediction_results)
-            st.dataframe(pred_df, use_container_width=True)
-            
-            # Export classification results
-            st.subheader("📤 Export Classification Results")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                # Feature importance export
-                st.markdown(create_download_link(feature_importance, "feature_importance", "csv"), unsafe_allow_html=True)
-            
-            with col2:
-                # Predictions export
-                st.markdown(create_download_link(pred_df, "risk_predictions", "csv"), unsafe_allow_html=True)
-            
-            with col3:
-                # Model metrics export
-                model_metrics = {
-                    "training_accuracy": accuracy,
-                    "risk_threshold": threshold_value,
-                    "high_risk_count": risk_counts[1],
-                    "low_risk_count": risk_counts[0],
-                    "high_risk_percentage": risk_counts[1]/len(df_encoded),
-                    "low_risk_percentage": risk_counts[0]/len(df_encoded)
-                }
-                metrics_df = pd.DataFrame([model_metrics])
-                st.markdown(create_download_link(metrics_df, "model_metrics", "csv"), unsafe_allow_html=True)
+                # Export classification results
+                st.subheader("📤 Export Classification Results")
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    # Model comparison export
+                    st.markdown(create_download_link(comparison_df, "model_comparison", "csv"), unsafe_allow_html=True)
+                
+                with col2:
+                    # Predictions export
+                    st.markdown(create_download_link(pred_df, "risk_predictions", "csv"), unsafe_allow_html=True)
+                
+                with col3:
+                    # Feature importance export (if available)
+                    if tree_models:
+                        st.markdown(create_download_link(importance_df, "feature_importance_comparison", "csv"), unsafe_allow_html=True)
+                    else:
+                        st.write("No tree-based models selected")
 
 # Insights & Summary Section
 elif analysis_option == "Insights & Summary":
