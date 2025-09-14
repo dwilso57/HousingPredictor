@@ -99,6 +99,64 @@ def calculate_rates(df):
     df["Rate_per_100k"] = (df["Suicides"] / df["Population"]) * 100000
     return df
 
+def transform_cdc_format(df):
+    """Transform CDC WONDER format to standard format"""
+    # Map CDC column names to standard names
+    column_mapping = {
+        "Year": "Year",
+        "Age Group": "AgeGroup", 
+        "Gender": "Sex",
+        "Race": "Race",
+        "Deaths": "Suicides",
+        "Population": "Population"
+    }
+    
+    df_transformed = df.rename(columns=column_mapping)
+    
+    # Clean up gender values
+    df_transformed["Sex"] = df_transformed["Sex"].replace({
+        "Male": "Male",
+        "Female": "Female",
+        "M": "Male",
+        "F": "Female"
+    })
+    
+    # Clean up age group formatting
+    df_transformed["AgeGroup"] = df_transformed["AgeGroup"].str.replace(" years", "").str.replace(" year", "")
+    
+    return df_transformed
+
+def transform_census_format(df):
+    """Transform Census Bureau format to standard format"""
+    # Map Census column names to standard names
+    column_mapping = {
+        "YEAR": "Year",
+        "AGEGROUP": "AgeGroup",
+        "SEX": "Sex", 
+        "RACE": "Race",
+        "DEATHS": "Suicides",
+        "POPULATION": "Population"
+    }
+    
+    df_transformed = df.rename(columns=column_mapping)
+    
+    # Clean up sex values (Census typically uses numeric codes)
+    sex_mapping = {
+        1: "Male", 2: "Female",
+        "1": "Male", "2": "Female",
+        "MALE": "Male", "FEMALE": "Female"
+    }
+    df_transformed["Sex"] = df_transformed["Sex"].replace(sex_mapping)
+    
+    # Clean up race values
+    race_mapping = {
+        1: "White", 2: "Black", 3: "Hispanic", 4: "Asian", 5: "Other",
+        "1": "White", "2": "Black", "3": "Hispanic", "4": "Asian", "5": "Other"
+    }
+    df_transformed["Race"] = df_transformed["Race"].replace(race_mapping)
+    
+    return df_transformed
+
 def encode_categorical_features(df):
     """Encode categorical features for machine learning"""
     le_age, le_sex, le_race = LabelEncoder(), LabelEncoder(), LabelEncoder()
@@ -137,10 +195,28 @@ if analysis_option == "Data Upload & Overview":
     
     with col1:
         st.subheader("Upload Your Data")
+        
+        # Add CDC/Census data format option
+        data_format = st.selectbox(
+            "Select Data Format",
+            ["Standard Format", "CDC WONDER Format", "Census Bureau Format"],
+            help="Choose the format that matches your data source"
+        )
+        
+        if data_format == "Standard Format":
+            upload_help = "Your CSV should contain columns: AgeGroup, Sex, Race, Suicides, Population"
+            required_cols = ["AgeGroup", "Sex", "Race", "Suicides", "Population"]
+        elif data_format == "CDC WONDER Format":
+            upload_help = "CDC WONDER format: Year, Age Group, Gender, Race, Deaths, Population"
+            required_cols = ["Year", "Age Group", "Gender", "Race", "Deaths", "Population"]
+        else:  # Census Bureau Format
+            upload_help = "Census format: YEAR, AGEGROUP, SEX, RACE, DEATHS, POPULATION"
+            required_cols = ["YEAR", "AGEGROUP", "SEX", "RACE", "DEATHS", "POPULATION"]
+        
         uploaded_file = st.file_uploader(
-            "Choose a CSV file with columns: AgeGroup, Sex, Race, Suicides, Population",
+            f"Choose a CSV file with format: {data_format}",
             type="csv",
-            help="Your CSV should contain columns for demographic data and suicide statistics"
+            help=upload_help
         )
     
     with col2:
@@ -156,21 +232,45 @@ if analysis_option == "Data Upload & Overview":
         try:
             df = pd.read_csv(uploaded_file)
             
-            # Validate required columns
-            required_columns = ["AgeGroup", "Sex", "Race", "Suicides", "Population"]
-            missing_columns = [col for col in required_columns if col not in df.columns]
+            # Validate required columns based on format
+            missing_columns = [col for col in required_cols if col not in df.columns]
             
             if missing_columns:
-                st.error(f"Missing required columns: {missing_columns}")
-                st.info("Please ensure your CSV contains: AgeGroup, Sex, Race, Suicides, Population")
+                st.error(f"Missing required columns for {data_format}: {missing_columns}")
+                st.info(upload_help)
             else:
-                st.session_state.df = calculate_rates(df)
-                st.session_state.data_loaded = True
-                st.success("Data uploaded and processed successfully!")
-                st.rerun()
+                # Transform data based on selected format
+                if data_format == "CDC WONDER Format":
+                    df = transform_cdc_format(df)
+                elif data_format == "Census Bureau Format":
+                    df = transform_census_format(df)
+                # Standard format doesn't need transformation
+                
+                # Ensure we have the standard columns after transformation
+                standard_columns = ["AgeGroup", "Sex", "Race", "Suicides", "Population"]
+                missing_after_transform = [col for col in standard_columns if col not in df.columns]
+                
+                if missing_after_transform:
+                    st.error(f"Data transformation failed. Missing columns: {missing_after_transform}")
+                else:
+                    # Clean and validate data
+                    df = df.dropna(subset=["Suicides", "Population"])  # Remove rows with missing critical data
+                    df = df[df["Population"] > 0]  # Remove rows with zero population to avoid divide by zero
+                    
+                    st.session_state.df = calculate_rates(df)
+                    st.session_state.data_loaded = True
+                    st.success(f"Data uploaded and processed successfully! Format: {data_format}")
+                    
+                    # Show data preview with format info
+                    if "Year" in df.columns:
+                        year_range = f"{df['Year'].min()}-{df['Year'].max()}"
+                        st.info(f"📅 Data covers years: {year_range}")
+                    
+                    st.rerun()
                 
         except Exception as e:
             st.error(f"Error reading file: {str(e)}")
+            st.info("Please check that your file is a valid CSV and matches the selected format.")
     
     # Display data overview if loaded
     if st.session_state.data_loaded and st.session_state.df is not None:
