@@ -12,6 +12,8 @@ from sklearn.metrics import classification_report, confusion_matrix
 import numpy as np
 import io
 import base64
+import json
+from datetime import datetime
 
 # Set page configuration
 st.set_page_config(
@@ -100,6 +102,28 @@ def encode_categorical_features(df):
     df["Race_encoded"] = le_race.fit_transform(df["Race"])
     return df, le_age, le_sex, le_race
 
+def create_download_link(df, filename, file_format="csv"):
+    """Create download link for DataFrame"""
+    if file_format == "csv":
+        csv = df.to_csv(index=False)
+        b64 = base64.b64encode(csv.encode()).decode()
+        href = f'<a href="data:file/csv;base64,{b64}" download="{filename}.csv">Download {filename}.csv</a>'
+    elif file_format == "json":
+        json_str = df.to_json(orient='records', indent=2)
+        b64 = base64.b64encode(json_str.encode()).decode()
+        href = f'<a href="data:file/json;base64,{b64}" download="{filename}.json">Download {filename}.json</a>'
+    return href
+
+def export_analysis_results(data_dict, analysis_type):
+    """Export analysis results as JSON"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{analysis_type}_analysis_{timestamp}"
+    
+    json_str = json.dumps(data_dict, indent=2, default=str)
+    b64 = base64.b64encode(json_str.encode()).decode()
+    href = f'<a href="data:file/json;base64,{b64}" download="{filename}.json">Download Analysis Results</a>'
+    return href
+
 # Data Upload & Overview Section
 if analysis_option == "Data Upload & Overview":
     st.header("📁 Data Upload & Overview")
@@ -162,6 +186,17 @@ if analysis_option == "Data Upload & Overview":
         
         st.subheader("📈 Basic Statistics")
         st.dataframe(st.session_state.df.describe(), use_container_width=True)
+        
+        # Export options
+        st.subheader("📤 Export Data")
+        col1, col2 = st.columns(2)
+        with col1:
+            # Raw data export
+            st.markdown(create_download_link(st.session_state.df, "suicide_data", "csv"), unsafe_allow_html=True)
+        with col2:
+            # Statistics export
+            stats_df = st.session_state.df.describe()
+            st.markdown(create_download_link(stats_df, "data_statistics", "csv"), unsafe_allow_html=True)
 
 # Exploratory Analysis Section
 elif analysis_option == "Exploratory Analysis":
@@ -238,6 +273,25 @@ elif analysis_option == "Exploratory Analysis":
             aspect="auto"
         )
         st.plotly_chart(fig_heatmap, use_container_width=True)
+        
+        # Export exploratory analysis results
+        st.subheader("📤 Export Analysis Results")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Age group analysis
+            age_rates = df.groupby("AgeGroup")["Rate_per_100k"].mean().reset_index()
+            st.markdown(create_download_link(age_rates, "age_group_analysis", "csv"), unsafe_allow_html=True)
+        
+        with col2:
+            # Sex analysis  
+            sex_rates = df.groupby("Sex")["Rate_per_100k"].mean().reset_index()
+            st.markdown(create_download_link(sex_rates, "sex_analysis", "csv"), unsafe_allow_html=True)
+        
+        with col3:
+            # Race analysis
+            race_rates = df.groupby("Race")["Rate_per_100k"].mean().reset_index()
+            st.markdown(create_download_link(race_rates, "race_analysis", "csv"), unsafe_allow_html=True)
 
 # Clustering Analysis Section
 elif analysis_option == "Clustering Analysis":
@@ -329,6 +383,19 @@ elif analysis_option == "Clustering Analysis":
                             cluster_data[["AgeGroup", "Sex", "Race", "Rate_per_100k"]].head(),
                             use_container_width=True
                         )
+                
+                # Export clustering results
+                st.subheader("📤 Export Clustering Results")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    # Cluster summary export
+                    st.markdown(create_download_link(cluster_summary, "cluster_summary", "csv"), unsafe_allow_html=True)
+                
+                with col2:
+                    # Full clustered data export
+                    clustered_data = df_encoded[["AgeGroup", "Sex", "Race", "Rate_per_100k", "Cluster"]]
+                    st.markdown(create_download_link(clustered_data, "clustered_data", "csv"), unsafe_allow_html=True)
 
 # Classification Model Section
 elif analysis_option == "Classification Model":
@@ -450,6 +517,31 @@ elif analysis_option == "Classification Model":
             
             pred_df = pd.DataFrame(prediction_results)
             st.dataframe(pred_df, use_container_width=True)
+            
+            # Export classification results
+            st.subheader("📤 Export Classification Results")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # Feature importance export
+                st.markdown(create_download_link(feature_importance, "feature_importance", "csv"), unsafe_allow_html=True)
+            
+            with col2:
+                # Predictions export
+                st.markdown(create_download_link(pred_df, "risk_predictions", "csv"), unsafe_allow_html=True)
+            
+            with col3:
+                # Model metrics export
+                model_metrics = {
+                    "training_accuracy": accuracy,
+                    "risk_threshold": threshold_value,
+                    "high_risk_count": risk_counts[1],
+                    "low_risk_count": risk_counts[0],
+                    "high_risk_percentage": risk_counts[1]/len(df_encoded),
+                    "low_risk_percentage": risk_counts[0]/len(df_encoded)
+                }
+                metrics_df = pd.DataFrame([model_metrics])
+                st.markdown(create_download_link(metrics_df, "model_metrics", "csv"), unsafe_allow_html=True)
 
 # Insights & Summary Section
 elif analysis_option == "Insights & Summary":
@@ -543,6 +635,34 @@ elif analysis_option == "Insights & Summary":
         - Implement targeted interventions based on identified patterns
         - Regular monitoring and updating of statistics
         """)
+        
+        # Export insights summary
+        st.subheader("📤 Export Summary Report")
+        
+        # Create comprehensive summary report
+        summary_data = {
+            "metric": [
+                "Total Records", "Age Groups", "Races", "Average Rate",
+                "Highest Rate Group", "Lowest Rate Group", 
+                "Total Suicides", "Overall Rate",
+                "Highest Risk Age", "Lowest Risk Age",
+                "Male vs Female Ratio", "Higher Risk Sex",
+                "Highest Risk Race", "Lowest Risk Race"
+            ],
+            "value": [
+                len(df), df["AgeGroup"].nunique(), df["Race"].nunique(), 
+                f"{df['Rate_per_100k'].mean():.1f}",
+                f"{highest_rate['AgeGroup']}, {highest_rate['Sex']}, {highest_rate['Race']}",
+                f"{lowest_rate['AgeGroup']}, {lowest_rate['Sex']}, {lowest_rate['Race']}",
+                total_suicides, f"{overall_rate:.1f}",
+                age_analysis.index[0], age_analysis.index[-1],
+                f"{sex_ratio:.1f}:1", sex_analysis.idxmax(),
+                race_analysis.index[0], race_analysis.index[-1]
+            ]
+        }
+        
+        summary_df = pd.DataFrame(summary_data)
+        st.markdown(create_download_link(summary_df, "insights_summary_report", "csv"), unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
