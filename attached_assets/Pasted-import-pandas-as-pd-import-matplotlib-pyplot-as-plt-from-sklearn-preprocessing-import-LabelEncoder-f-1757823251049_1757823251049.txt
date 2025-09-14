@@ -1,0 +1,87 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import LabelEncoder
+from sklearn.cluster import KMeans
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+
+# -------------------------------
+# 1. LOAD & CLEAN DATA
+# -------------------------------
+# Example dataset (replace with CDC + Census data)
+data = [
+    ("10-14", "Male", "White", 300, 10000000),
+    ("10-14", "Female", "White", 150, 10000000),
+    ("15-24", "Male", "White", 4500, 20000000),
+    ("15-24", "Female", "White", 1800, 20000000),
+    ("25-34", "Male", "White", 4000, 12000000),
+    ("25-34", "Female", "White", 1200, 11000000),
+    ("65+", "Male", "White", 15000, 18000000),
+    ("65+", "Female", "White", 3000, 20000000),
+    ("65+", "Male", "Black", 1200, 5000000),
+    ("65+", "Female", "Black", 800, 6000000),
+    ("65+", "Male", "Hispanic", 900, 4000000),
+    ("65+", "Female", "Hispanic", 500, 4200000),
+]
+
+df = pd.DataFrame(data, columns=["AgeGroup", "Sex", "Race", "Suicides", "Population"])
+
+# -------------------------------
+# 2. CALCULATE RATES
+# -------------------------------
+df["Rate_per_100k"] = (df["Suicides"] / df["Population"]) * 100000
+
+print("\n=== Cleaned Dataset with Rates ===\n")
+print(df)
+
+# -------------------------------
+# 3. EXPLORATORY VISUALIZATION
+# -------------------------------
+plt.figure(figsize=(8,5))
+df.groupby("AgeGroup")["Rate_per_100k"].mean().plot(kind="bar")
+plt.title("Average Suicide Rate by Age Group")
+plt.ylabel("Rate per 100,000")
+plt.show()
+
+# -------------------------------
+# 4. CLUSTERING (KMeans)
+# -------------------------------
+# Encode categorical features
+le_age, le_sex, le_race = LabelEncoder(), LabelEncoder(), LabelEncoder()
+df["Age_encoded"] = le_age.fit_transform(df["AgeGroup"])
+df["Sex_encoded"] = le_sex.fit_transform(df["Sex"])
+df["Race_encoded"] = le_race.fit_transform(df["Race"])
+
+# Prepare features
+X = df[["Age_encoded", "Sex_encoded", "Race_encoded", "Rate_per_100k"]]
+
+# KMeans
+kmeans = KMeans(n_clusters=3, random_state=42, n_init=10)
+df["Cluster"] = kmeans.fit_predict(X)
+
+print("\n=== Cluster Assignments ===\n")
+print(df[["AgeGroup","Sex","Race","Rate_per_100k","Cluster"]])
+
+# -------------------------------
+# 5. CLASSIFICATION (Decision Tree)
+# -------------------------------
+# Label high vs low risk
+df["HighRisk"] = (df["Rate_per_100k"] > df["Rate_per_100k"].median()).astype(int)
+
+# Features + target
+features = ["Age_encoded", "Sex_encoded", "Race_encoded"]
+X_class = df[features]
+y_class = df["HighRisk"]
+
+# Train classifier
+clf = DecisionTreeClassifier(max_depth=3, random_state=42)
+clf.fit(X_class, y_class)
+
+# Visualize tree
+plt.figure(figsize=(10,6))
+plot_tree(clf, feature_names=features,
+          class_names=["Low Risk","High Risk"],
+          filled=True)
+plt.show()
+
+print("\n=== Classification Rules (Decision Tree) ===\n")
+print("The tree shows which factors (age, sex, race) predict high vs low suicide risk.")
