@@ -19,6 +19,11 @@ import io
 import base64
 import json
 from datetime import datetime
+from statsmodels.tsa.exponential_smoothing.ets import ETSModel
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.tsa.seasonal import seasonal_decompose
+import warnings
+warnings.filterwarnings('ignore')
 
 # Set page configuration
 st.set_page_config(
@@ -39,7 +44,7 @@ Upload your CSV data to explore patterns, perform clustering analysis, and build
 st.sidebar.title("Navigation")
 analysis_option = st.sidebar.selectbox(
     "Choose Analysis Type:",
-    ["Data Upload & Overview", "Exploratory Analysis", "Clustering Analysis", "Classification Model", "Statistical Tests", "Insights & Summary"]
+    ["Data Upload & Overview", "Exploratory Analysis", "Clustering Analysis", "Classification Model", "Statistical Tests", "Predictive Forecasting", "Insights & Summary"]
 )
 
 # Initialize session state
@@ -847,6 +852,490 @@ elif analysis_option == "Statistical Tests":
         with col3:
             # ANOVA results export
             st.markdown(create_download_link(anova_df, "anova_results", "csv"), unsafe_allow_html=True)
+
+# Predictive Forecasting Section
+elif analysis_option == "Predictive Forecasting":
+    st.header("🔮 Predictive Forecasting & Future Trends")
+    
+    if not st.session_state.data_loaded:
+        st.warning("Please upload data first in the 'Data Upload & Overview' section.")
+    else:
+        df = st.session_state.df
+        
+        # Check if data has temporal information
+        has_year = 'Year' in df.columns
+        
+        if not has_year:
+            st.info("📈 **Trend Analysis Based on Current Data**")
+            st.write("Since your data doesn't contain temporal information (Year column), we'll perform trend analysis based on demographic patterns.")
+            
+            # Demographic trend analysis
+            st.subheader("📊 Demographic Risk Predictions")
+            
+            # Predict risk levels based on current patterns
+            df_analysis = df.copy()
+            
+            # Calculate risk categories based on suicide rates
+            rate_percentiles = df_analysis['Rate_per_100k'].quantile([0.33, 0.67])
+            def categorize_risk(rate):
+                if rate <= rate_percentiles.iloc[0]:
+                    return "Low Risk"
+                elif rate <= rate_percentiles.iloc[1]:
+                    return "Medium Risk"
+                else:
+                    return "High Risk"
+            
+            df_analysis['Risk_Category'] = df_analysis['Rate_per_100k'].apply(categorize_risk)
+            
+            # Risk distribution
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Risk by demographic
+                fig = px.bar(
+                    df_analysis.groupby(['AgeGroup', 'Risk_Category']).size().reset_index(name='Count'),
+                    x='AgeGroup', y='Count', color='Risk_Category',
+                    title='Risk Categories by Age Group',
+                    color_discrete_map={
+                        'Low Risk': 'green',
+                        'Medium Risk': 'orange', 
+                        'High Risk': 'red'
+                    }
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with col2:
+                # Risk heatmap
+                risk_pivot = df_analysis.pivot_table(
+                    values='Rate_per_100k', 
+                    index='AgeGroup', 
+                    columns='Sex', 
+                    aggfunc='mean'
+                )
+                fig = px.imshow(
+                    risk_pivot,
+                    title='Suicide Rate Heatmap by Age and Sex',
+                    color_continuous_scale='Reds',
+                    aspect='auto'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            
+            # Predictive modeling using existing demographic patterns
+            st.subheader("🎯 Risk Prediction Model")
+            
+            # Simple trend projection based on current patterns
+            age_trends = df_analysis.groupby('AgeGroup')['Rate_per_100k'].mean().sort_values(ascending=False)
+            sex_trends = df_analysis.groupby('Sex')['Rate_per_100k'].mean()
+            race_trends = df_analysis.groupby('Race')['Rate_per_100k'].mean().sort_values(ascending=False)
+            
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.write("**Highest Risk Age Groups:**")
+                for i, (age, rate) in enumerate(age_trends.head(3).items()):
+                    st.write(f"{i+1}. {age}: {rate:.1f} per 100k")
+            
+            with col2:
+                st.write("**Risk by Sex:**")
+                for sex, rate in sex_trends.items():
+                    st.write(f"• {sex}: {rate:.1f} per 100k")
+            
+            with col3:
+                st.write("**Highest Risk Race Groups:**")
+                for i, (race, rate) in enumerate(race_trends.head(3).items()):
+                    st.write(f"{i+1}. {race}: {rate:.1f} per 100k")
+            
+            # Future scenario projection
+            st.subheader("📈 Scenario Projections")
+            
+            scenario = st.selectbox(
+                "Select projection scenario:",
+                ["Current Trends Continue", "Optimistic (20% reduction)", "Pessimistic (15% increase)"]
+            )
+            
+            multiplier = {"Current Trends Continue": 1.0, "Optimistic (20% reduction)": 0.8, "Pessimistic (15% increase)": 1.15}[scenario]
+            
+            df_projected = df_analysis.copy()
+            df_projected['Projected_Rate'] = df_projected['Rate_per_100k'] * multiplier
+            df_projected['Projected_Suicides'] = (df_projected['Projected_Rate'] / 100000) * df_projected['Population']
+            
+            # Comparison chart
+            comparison_data = pd.DataFrame({
+                'Demographic': df_projected['AgeGroup'] + ' - ' + df_projected['Sex'],
+                'Current Rate': df_projected['Rate_per_100k'],
+                'Projected Rate': df_projected['Projected_Rate']
+            })
+            
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                name='Current Rate',
+                x=comparison_data['Demographic'],
+                y=comparison_data['Current Rate'],
+                marker_color='lightblue'
+            ))
+            fig.add_trace(go.Bar(
+                name='Projected Rate',
+                x=comparison_data['Demographic'], 
+                y=comparison_data['Projected Rate'],
+                marker_color='darkblue'
+            ))
+            fig.update_layout(
+                title=f'Current vs Projected Rates - {scenario}',
+                xaxis_title='Demographic Group',
+                yaxis_title='Rate per 100k',
+                barmode='group'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+        else:
+            # Time series analysis for data with years
+            st.info("📈 **Advanced Time Series Forecasting**")
+            st.write("Your data contains temporal information. Performing statistical time series forecasting with confidence intervals.")
+            
+            # Data preprocessing and validation
+            df_ts = df.copy()
+            df_ts['Year'] = pd.to_numeric(df_ts['Year'], errors='coerce')
+            df_ts = df_ts.dropna(subset=['Year'])
+            df_ts = df_ts.sort_values('Year')
+            
+            # Forecasting configuration
+            st.subheader("🔧 Forecast Configuration")
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                forecast_horizon = st.selectbox(
+                    "Forecast Horizon (years):",
+                    [3, 5, 10, 15],
+                    index=1
+                )
+            
+            with col2:
+                demographic_grouping = st.selectbox(
+                    "Forecast by demographic:",
+                    ["Overall", "By Sex", "By Age Group", "By Race"]
+                )
+            
+            with col3:
+                model_selection = st.selectbox(
+                    "Model Selection:",
+                    ["Automatic (Best AIC)", "ARIMA", "Exponential Smoothing"]
+                )
+            
+            # Prepare time series data based on grouping
+            if demographic_grouping == "Overall":
+                ts_data = df_ts.groupby('Year').agg({
+                    'Suicides': 'sum',
+                    'Population': 'sum'
+                }).reset_index()
+                ts_data['Rate_per_100k'] = (ts_data['Suicides'] / ts_data['Population']) * 100000
+                forecast_groups = [("Overall", ts_data)]
+            else:
+                group_col = {"By Sex": "Sex", "By Age Group": "AgeGroup", "By Race": "Race"}[demographic_grouping]
+                forecast_groups = []
+                for group_val in df_ts[group_col].unique():
+                    group_data = df_ts[df_ts[group_col] == group_val].groupby('Year').agg({
+                        'Suicides': 'sum',
+                        'Population': 'sum'
+                    }).reset_index()
+                    if len(group_data) >= 3:  # Minimum data points for modeling
+                        group_data['Rate_per_100k'] = (group_data['Suicides'] / group_data['Population']) * 100000
+                        forecast_groups.append((group_val, group_data))
+            
+            # Helper function for model fitting and forecasting
+            def fit_forecast_model(data, horizon, model_type="auto"):
+                """Fit time series model and generate forecasts with confidence intervals"""
+                if len(data) < 3:
+                    return None, None, None, None
+                
+                # Prepare time series
+                ts = data.set_index('Year')['Rate_per_100k']
+                
+                best_model = None
+                best_aic = float('inf')
+                models_to_try = []
+                
+                if model_type == "auto" or model_type == "Automatic (Best AIC)":
+                    models_to_try = ["ARIMA", "ETS"]
+                elif model_type == "ARIMA":
+                    models_to_try = ["ARIMA"]
+                else:  # Exponential Smoothing
+                    models_to_try = ["ETS"]
+                
+                # Try different models
+                for model_name in models_to_try:
+                    try:
+                        if model_name == "ARIMA":
+                            # Try simple ARIMA models
+                            for p, d, q in [(1,1,1), (2,1,1), (1,1,2), (0,1,1)]:
+                                try:
+                                    model = ARIMA(ts, order=(p,d,q))
+                                    fitted = model.fit()
+                                    if fitted.aic < best_aic:
+                                        best_aic = fitted.aic
+                                        best_model = fitted
+                                        best_model_name = f"ARIMA({p},{d},{q})"
+                                except:
+                                    continue
+                        
+                        elif model_name == "ETS":
+                            try:
+                                model = ETSModel(ts, trend="add", seasonal=None)
+                                fitted = model.fit()
+                                if fitted.aic < best_aic:
+                                    best_aic = fitted.aic
+                                    best_model = fitted
+                                    best_model_name = "ETS"
+                            except:
+                                continue
+                    except:
+                        continue
+                
+                # Generate forecast if we have a model
+                if best_model is not None:
+                    try:
+                        forecast = best_model.forecast(steps=horizon)
+                        # Get confidence intervals
+                        pred_summary = best_model.get_prediction(start=0, end=len(ts) + horizon - 1)
+                        conf_int = pred_summary.conf_int()
+                        
+                        return best_model, forecast, conf_int, best_model_name
+                    except:
+                        return None, None, None, None
+                
+                return None, None, None, None
+            
+            # Perform forecasting for each group
+            forecast_results = {}
+            forecast_charts = []
+            
+            for group_name, group_data in forecast_groups:
+                if len(group_data) >= 3:  # Minimum data for forecasting
+                    model, forecast, conf_int, model_name = fit_forecast_model(
+                        group_data, forecast_horizon, model_selection
+                    )
+                    
+                    if model is not None and forecast is not None:
+                        # Prepare forecast data
+                        last_year = int(group_data['Year'].max())
+                        future_years = list(range(last_year + 1, last_year + forecast_horizon + 1))
+                        
+                        # Create forecast dataframe
+                        forecast_df = pd.DataFrame({
+                            'Year': future_years,
+                            'Forecast': forecast.values if hasattr(forecast, 'values') else forecast,
+                            'Group': group_name,
+                            'Model': model_name
+                        })
+                        
+                        # Add confidence intervals if available
+                        if conf_int is not None:
+                            try:
+                                forecast_lower = conf_int.iloc[-forecast_horizon:, 0].values
+                                forecast_upper = conf_int.iloc[-forecast_horizon:, 1].values
+                                forecast_df['Lower_CI'] = forecast_lower
+                                forecast_df['Upper_CI'] = forecast_upper
+                            except:
+                                pass
+                        
+                        forecast_results[group_name] = {
+                            'data': group_data,
+                            'forecast': forecast_df,
+                            'model': model_name,
+                            'aic': getattr(model, 'aic', None)
+                        }
+            
+            # Display forecasting results
+            st.subheader("📈 Forecast Results")
+            
+            if not forecast_results:
+                st.warning("Insufficient data for time series forecasting. Need at least 3 years of data.")
+            else:
+                # Create tabs for different groups
+                if len(forecast_results) == 1:
+                    # Single forecast
+                    group_name, result = list(forecast_results.items())[0]
+                    
+                    # Historical data visualization
+                    fig = go.Figure()
+                    
+                    # Historical data
+                    fig.add_trace(go.Scatter(
+                        x=result['data']['Year'], 
+                        y=result['data']['Rate_per_100k'],
+                        mode='lines+markers', 
+                        name='Historical Data',
+                        line=dict(color='blue', width=2)
+                    ))
+                    
+                    # Forecast line
+                    fig.add_trace(go.Scatter(
+                        x=result['forecast']['Year'],
+                        y=result['forecast']['Forecast'],
+                        mode='lines+markers',
+                        name=f'Forecast ({result["model"]})',
+                        line=dict(color='red', width=2, dash='dot')
+                    ))
+                    
+                    # Confidence intervals if available
+                    if 'Lower_CI' in result['forecast'].columns:
+                        fig.add_trace(go.Scatter(
+                            x=result['forecast']['Year'],
+                            y=result['forecast']['Upper_CI'],
+                            mode='lines',
+                            name='Upper 95% CI',
+                            line=dict(color='rgba(255,0,0,0)'),
+                            showlegend=False
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=result['forecast']['Year'],
+                            y=result['forecast']['Lower_CI'],
+                            mode='lines',
+                            name='95% Confidence Interval',
+                            line=dict(color='rgba(255,0,0,0)'),
+                            fill='tonexty',
+                            fillcolor='rgba(255,0,0,0.2)'
+                        ))
+                    
+                    fig.update_layout(
+                        title=f'Time Series Forecast - {group_name}',
+                        xaxis_title='Year',
+                        yaxis_title='Rate per 100k',
+                        hovermode='x unified'
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Model performance metrics
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        current_rate = result['data']['Rate_per_100k'].iloc[-1]
+                        st.metric("Current Rate", f"{current_rate:.2f} per 100k")
+                    with col2:
+                        future_rate = result['forecast']['Forecast'].iloc[-1]
+                        change = future_rate - current_rate
+                        st.metric(
+                            f"Forecast ({forecast_horizon}Y)", 
+                            f"{future_rate:.2f} per 100k",
+                            f"{change:+.2f}"
+                        )
+                    with col3:
+                        if result['aic']:
+                            st.metric("Model AIC", f"{result['aic']:.1f}")
+                        st.write(f"**Model:** {result['model']}")
+                
+                else:
+                    # Multiple forecasts - use tabs
+                    tabs = st.tabs(list(forecast_results.keys()))
+                    for i, (group_name, result) in enumerate(forecast_results.items()):
+                        with tabs[i]:
+                            # Similar visualization for each group
+                            fig = go.Figure()
+                            
+                            fig.add_trace(go.Scatter(
+                                x=result['data']['Year'], 
+                                y=result['data']['Rate_per_100k'],
+                                mode='lines+markers', 
+                                name='Historical Data',
+                                line=dict(color='blue')
+                            ))
+                            
+                            fig.add_trace(go.Scatter(
+                                x=result['forecast']['Year'],
+                                y=result['forecast']['Forecast'],
+                                mode='lines+markers',
+                                name=f'Forecast ({result["model"]})',
+                                line=dict(color='red', dash='dot')
+                            ))
+                            
+                            if 'Lower_CI' in result['forecast'].columns:
+                                fig.add_trace(go.Scatter(
+                                    x=result['forecast']['Year'],
+                                    y=result['forecast']['Upper_CI'],
+                                    mode='lines',
+                                    line=dict(color='rgba(255,0,0,0)'),
+                                    showlegend=False
+                                ))
+                                fig.add_trace(go.Scatter(
+                                    x=result['forecast']['Year'],
+                                    y=result['forecast']['Lower_CI'],
+                                    mode='lines',
+                                    fill='tonexty',
+                                    fillcolor='rgba(255,0,0,0.2)',
+                                    name='95% CI'
+                                ))
+                            
+                            fig.update_layout(
+                                title=f'Forecast - {group_name}',
+                                xaxis_title='Year',
+                                yaxis_title='Rate per 100k'
+                            )
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Metrics
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                current = result['data']['Rate_per_100k'].iloc[-1]
+                                future = result['forecast']['Forecast'].iloc[-1]
+                                st.metric("Current", f"{current:.2f}")
+                                st.metric("Forecast", f"{future:.2f}")
+                            with col2:
+                                if result['aic']:
+                                    st.write(f"**AIC:** {result['aic']:.1f}")
+                                st.write(f"**Model:** {result['model']}")
+                
+                # Model comparison summary
+                if len(forecast_results) > 1:
+                    st.subheader("📊 Model Comparison Summary")
+                    comparison_data = []
+                    for group_name, result in forecast_results.items():
+                        current_rate = result['data']['Rate_per_100k'].iloc[-1]
+                        forecast_rate = result['forecast']['Forecast'].iloc[-1]
+                        change = forecast_rate - current_rate
+                        comparison_data.append({
+                            'Group': group_name,
+                            'Current Rate': current_rate,
+                            'Forecast Rate': forecast_rate,
+                            'Change': change,
+                            'Model': result['model'],
+                            'AIC': result.get('aic', 'N/A')
+                        })
+                    
+                    comparison_df = pd.DataFrame(comparison_data)
+                    st.dataframe(comparison_df, use_container_width=True)
+        
+        # Export forecasting results
+        st.subheader("📤 Export Forecasting Results")
+        
+        if has_year and forecast_results:
+            # Export enhanced time series forecasts with confidence intervals
+            all_forecasts = []
+            for group_name, result in forecast_results.items():
+                # Historical data
+                hist_data = result['data'].copy()
+                hist_data['Group'] = group_name
+                hist_data['Type'] = 'Historical'
+                hist_data['Model'] = result['model']
+                hist_data = hist_data.rename(columns={'Rate_per_100k': 'Value'})
+                
+                # Forecast data
+                forecast_data = result['forecast'].copy()
+                forecast_data['Type'] = 'Forecast'
+                forecast_data = forecast_data.rename(columns={'Forecast': 'Value'})
+                
+                # Select common columns
+                hist_cols = ['Year', 'Group', 'Type', 'Value', 'Model']
+                forecast_cols = ['Year', 'Group', 'Type', 'Value', 'Model']
+                if 'Lower_CI' in forecast_data.columns:
+                    forecast_cols.extend(['Lower_CI', 'Upper_CI'])
+                
+                all_forecasts.append(hist_data[hist_cols])
+                all_forecasts.append(forecast_data[forecast_cols])
+            
+            combined_forecast_df = pd.concat(all_forecasts, ignore_index=True)
+            st.markdown(create_download_link(combined_forecast_df, "advanced_time_series_forecast", "csv"), unsafe_allow_html=True)
+        else:
+            # Export demographic projections
+            projection_df = df_projected[['AgeGroup', 'Sex', 'Race', 'Rate_per_100k', 'Projected_Rate', 'Projected_Suicides']].copy()
+            st.markdown(create_download_link(projection_df, "demographic_projections", "csv"), unsafe_allow_html=True)
 
 # Insights & Summary Section
 elif analysis_option == "Insights & Summary":
